@@ -1,0 +1,55 @@
+version: '3.8'
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-08T15-41-24Z
+    command: server /data --console-address ':9001'
+    networks: [traefik_public]
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: root
+      MINIO_ROOT_PASSWORD: ${PASSWORD_32}
+      MINIO_BROWSER_REDIRECT_URL: https://miniofrontapp.${DOMAIN}
+      MINIO_SERVER_URL: https://miniobackapp.${DOMAIN}
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [ node.role == manager ]
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1024M
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.minio_s3.rule=Host(`miniobackapp.${DOMAIN}`)
+        - traefik.http.routers.minio_s3.entrypoints=websecure
+        - traefik.http.routers.minio_s3.tls.certresolver=le
+        - traefik.http.services.minio_s3.loadbalancer.server.port=9000
+        - traefik.http.routers.minio_console.rule=Host(`miniofrontapp.${DOMAIN}`)
+        - traefik.http.routers.minio_console.entrypoints=websecure
+        - traefik.http.routers.minio_console.tls.certresolver=le
+        - traefik.http.services.minio_console.loadbalancer.server.port=9001
+
+  minio-init:
+    image: minio/mc
+    depends_on: [minio]
+    networks: [traefik_public]
+    entrypoint: >
+      /bin/sh -c "
+      sleep 15 &&
+      mc alias set myminio https://miniobackapp.${DOMAIN} root ${PASSWORD_32} &&
+      mc admin config reset myminio identity_openid &&
+      mc admin service stop myminio
+      "
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: none
+      placement:
+        constraints: [ node.role == manager ]
+
+volumes:
+  minio_data: { external: true }
+networks:
+  traefik_public: { external: true }

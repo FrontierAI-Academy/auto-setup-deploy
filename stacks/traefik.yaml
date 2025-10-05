@@ -1,0 +1,44 @@
+version: '3.8'
+services:
+  traefik:
+    image: traefik:v2.11
+    command:
+      - --providers.docker=true
+      - --providers.docker.swarmMode=true
+      - --providers.docker.network=traefik_public
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.endpoint=unix:///var/run/docker.sock
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+      - --certificatesresolvers.le.acme.email=${EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --ping=true
+      - --accesslog=true
+      - --log.level=INFO
+    ports: ["80:80","443:443"]
+    volumes:
+      - certificados:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [ node.role == manager ]
+      labels:
+        - traefik.enable=true
+        - traefik.http.middlewares.websocket.headers.customrequestheaders.Connection=Upgrade
+        - traefik.http.middlewares.websocket.headers.customrequestheaders.Upgrade=websocket
+        - traefik.http.middlewares.websocket-timeout.headers.customresponseheaders.Server-Timeout=600
+        - traefik.http.middlewares.websocket-timeout.headers.customresponseheaders.Client-Timeout=600
+    networks: [traefik_public]
+
+volumes:
+  certificados:
+    external: true
+    name: certificados
+
+networks:
+  traefik_public: { external: true }

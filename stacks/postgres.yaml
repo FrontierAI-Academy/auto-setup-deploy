@@ -1,0 +1,23 @@
+version: '3.8'
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    command: [ "postgres", "--max_connections=100" ]
+    environment:
+      - POSTGRES_PASSWORD=${PASSWORD_32}
+    networks: [general_network]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [ node.role == manager ]
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2048M
+
+volumes:
+  postgres_data: { external: true }
+networks:
+  general_network: { external: true }
