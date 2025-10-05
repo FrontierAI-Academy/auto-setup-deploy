@@ -141,14 +141,26 @@ if [ "$JWT" != "null" ] && [ -n "$JWT" ]; then
   ENDPOINT_ID=1
   SWARM_ID=$(docker info -f '{{.Swarm.Cluster.ID}}')
 
-  # 1️⃣ Eliminar stacks existentes del Swarm
+  # 1️⃣ Eliminar stacks existentes
   for s in chatwoot minio n8n portainer postgres rabbitmq redis traefik; do
     echo "→ Eliminando stack existente: $s"
     docker stack rm "$s" >/dev/null 2>&1 || true
   done
-  sleep 15
 
-  # 2️⃣ Crear de nuevo todos los stacks con control completo
+  # 🕐 Esperar hasta que no queden servicios
+  echo "⏳ Esperando que se eliminen todos los servicios..."
+  for i in $(seq 1 60); do
+    ACTIVE=$(docker service ls -q | wc -l)
+    if [ "$ACTIVE" -eq 0 ]; then
+      green "✅ Todos los servicios fueron eliminados correctamente."
+      break
+    fi
+    printf "."
+    sleep 3
+  done
+  echo ""
+
+  # 2️⃣ Recrear stacks con control total
   for f in ${STACKS_DIR}/*.yaml; do
     NAME=$(basename "$f" .yaml)
     echo "→ Recreando stack $NAME..."
@@ -164,6 +176,7 @@ if [ "$JWT" != "null" ] && [ -n "$JWT" ]; then
 else
   red "❌ No se pudo autenticar con la API de Portainer."
 fi
+
 
 # === Resumen final ===
 green "==============================================================="
