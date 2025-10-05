@@ -75,6 +75,10 @@ fi
 yellow "Desplegando Traefik..."
 docker stack deploy -c "${ROOT_DIR}/stacks/traefik.yaml" traefik
 
+# --- Secret admin Portainer desde PASSWORD_32 ------------------------------
+docker secret rm portainer_admin_password >/dev/null 2>&1 || true
+printf '%s' "$PASSWORD_32" | docker secret create portainer_admin_password - >/dev/null
+
 # --- Portainer con dominio -------------------------------------------------
 yellow "Desplegando Portainer con dominio y Traefik..."
 docker stack deploy -c "${ROOT_DIR}/stacks/portainer.yaml" portainer

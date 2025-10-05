@@ -14,8 +14,8 @@ services:
       - --entrypoints.web.http.redirections.entryPoint.scheme=https
       - --certificatesresolvers.le.acme.email=${EMAIL}
       - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge=true
       - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
-      - --certificatesresolvers.le.acme.tlschallenge=true
       - --ping=true
       - --accesslog=true
       - --log.level=INFO

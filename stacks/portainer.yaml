@@ -1,4 +1,5 @@
 version: '3.8'
+
 services:
   agent:
     image: portainer/agent:2.20.1
@@ -13,11 +14,17 @@ services:
 
   portainer:
     image: portainer/portainer-ce:2.20.1
-    command: -H tcp://tasks.agent:9001 --tlsskipverify
+    command:
+      - -H
+      - tcp://tasks.agent:9001
+      - --tlsskipverify
+      - --admin-password-file
+      - /run/secrets/portainer_admin_password   # <- viene del secret
     volumes:
       - portainer_data:/data
     networks: [agent_network, traefik_public]
     deploy:
+      mode: replicated
       replicas: 1
       placement:
         constraints: [ node.role == manager ]
@@ -27,9 +34,15 @@ services:
         - traefik.http.routers.portainer.entrypoints=websecure
         - traefik.http.routers.portainer.tls.certresolver=le
         - traefik.http.services.portainer.loadbalancer.server.port=9000
+    secrets:
+      - portainer_admin_password                # <- montamos el secret
 
 networks:
-  traefik_public: { external: true, attachable: true }
   agent_network:  { external: true }
+  traefik_public: { external: true }
+
 volumes:
   portainer_data: { external: true }
+
+secrets:
+  portainer_admin_password: { external: true }  # <- lo crea el script
