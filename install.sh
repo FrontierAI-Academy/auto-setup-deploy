@@ -184,6 +184,42 @@ deploy_stack n8n "${ROOT_DIR}/stacks/n8n.yaml"
 
 green "✅ Todos los stacks registrados con control completo en Portainer."
 
+
+
+# --- Reimportar stacks en modo Full -----------------------------------------
+yellow "Actualizando control de stacks (Limited → Full)..."
+
+PORTAINER_URL="https://portainerapp.${DOMAIN}"
+PORTAINER_USER="admin"
+PORTAINER_PASS="${PASSWORD_32}"
+
+JWT=$(curl -sk -X POST "${PORTAINER_URL}/api/auth" \
+  -H "Content-Type: application/json" \
+  -d "{\"Username\": \"${PORTAINER_USER}\", \"Password\": \"${PORTAINER_PASS}\"}" | jq -r .jwt)
+
+if [ "$JWT" != "null" ] && [ -n "$JWT" ]; then
+  STACKS_DIR="${ROOT_DIR}/stacks"
+  SWARM_ID=$(docker info -f '{{.Swarm.Cluster.ID}}')
+  ENDPOINT_ID=1
+
+  for f in ${STACKS_DIR}/*.yaml; do
+    NAME=$(basename "$f" .yaml)
+    echo "→ Reimportando stack $NAME con control completo..."
+    curl -sk -X POST "${PORTAINER_URL}/api/stacks/create/swarm/file" \
+      -H "Authorization: Bearer ${JWT}" \
+      -F "Name=${NAME}" \
+      -F "SwarmID=${SWARM_ID}" \
+      -F "EndpointId=${ENDPOINT_ID}" \
+      -F "ComposeFile=@${f}" >/dev/null
+  done
+
+  green "✅ Todos los stacks fueron reimportados con control completo."
+else
+  red "❌ No se pudo autenticar con la API de Portainer para registrar los stacks."
+fi
+
+
+
 # --- Resumen ---------------------------------------------------------------
 green "==============================================================="
 green "✅ Despliegue completo."
