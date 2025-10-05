@@ -98,24 +98,25 @@ green "MinIO S3:      https://miniobackapp.${DOMAIN}"
 # --- Crear DBs necesarias en Postgres --------------------------------------
 yellow "Esperando Postgres listo (max 60s)..."
 for i in $(seq 1 30); do
-  if docker run --rm --network general_network \
-    -e PGPASSWORD="${PASSWORD_32}" pgvector/pgvector:pg16 \
-    psql -h postgres -U postgres -c "SELECT 1" >/dev/null 2>&1; then
+  PGCONT=$(docker ps --filter name=postgres_postgres -q | head -n1)
+  if [ -n "$PGCONT" ] && docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" psql -U postgres -c "SELECT 1" >/dev/null 2>&1; then
     break
   fi
   sleep 2
 done
 
 yellow "Creando bases de datos chatwoot y n8n_fila (si no existen)..."
-docker run --rm --network general_network -e PGPASSWORD="${PASSWORD_32}" pgvector/pgvector:pg16 \
-  psql -h postgres -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='chatwoot'" | grep -q 1 || \
-  docker run --rm --network general_network -e PGPASSWORD="${PASSWORD_32}" pgvector/pgvector:pg16 \
-  psql -h postgres -U postgres -c "CREATE DATABASE chatwoot"
+PGCONT=$(docker ps --filter name=postgres_postgres -q | head -n1)
 
-docker run --rm --network general_network -e PGPASSWORD="${PASSWORD_32}" pgvector/pgvector:pg16 \
-  psql -h postgres -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='n8n_fila'" | grep -q 1 || \
-  docker run --rm --network general_network -e PGPASSWORD="${PASSWORD_32}" pgvector/pgvector:pg16 \
-  psql -h postgres -U postgres -c "CREATE DATABASE n8n_fila"
+docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" \
+  psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='chatwoot'" | grep -q 1 || \
+  docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" \
+  psql -U postgres -c "CREATE DATABASE chatwoot"
+
+docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" \
+  psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='n8n_fila'" | grep -q 1 || \
+  docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" \
+  psql -U postgres -c "CREATE DATABASE n8n_fila"
 
 # --- Chatwoot --------------------------------------------------------------
 yellow "Desplegando Chatwoot..."
