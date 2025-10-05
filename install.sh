@@ -29,14 +29,16 @@ echo "  SERVER_IP=${SERVER_IP}"
 echo "  DOMAIN=${DOMAIN}"
 echo "  EMAIL=${EMAIL}"
 
-# === Instalación de Docker y Swarm ===
-yellow "Instalando Docker si falta..."
+# === Instalar dependencias básicas ===
 apt-get update -y
-apt-get install -y curl jq >/dev/null 2>&1 || true
+apt-get install -y curl jq gettext >/dev/null 2>&1 || true
+
+# === Instalar Docker si falta ===
 if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
 fi
 
+# === Inicializar Swarm ===
 if ! docker info 2>/dev/null | grep -q 'Swarm: active'; then
   yellow "Inicializando Docker Swarm..."
   docker swarm init --advertise-addr="${SERVER_IP}" || true
@@ -44,9 +46,9 @@ fi
 
 # === Redes y volúmenes ===
 yellow "Creando redes overlay..."
-docker network create --driver=overlay agent_network >/dev/null 2>&1 || true
-docker network create --driver=overlay traefik_public >/dev/null 2>&1 || true
-docker network create --driver=overlay general_network >/dev/null 2>&1 || true
+for net in agent_network traefik_public general_network; do
+  docker network create --driver=overlay "$net" >/dev/null 2>&1 || true
+done
 
 yellow "Creando volúmenes..."
 for vol in portainer_data certificados postgres_data redis_data rabbitmq_data minio_data chatwoot_data; do
@@ -55,7 +57,7 @@ done
 
 # === Traefik ===
 yellow "Desplegando Traefik..."
-docker stack deploy -c "${ROOT_DIR}/stacks/traefik.yaml" traefik
+envsubst < "${ROOT_DIR}/stacks/traefik.yaml" | docker stack deploy -c - traefik
 
 # === Portainer ===
 yellow "Creando secret de admin Portainer..."
@@ -63,54 +65,48 @@ docker secret rm portainer_admin_password >/dev/null 2>&1 || true
 printf '%s' "$PASSWORD_32" | docker secret create portainer_admin_password - >/dev/null
 
 yellow "Desplegando Portainer..."
-docker stack deploy -c "${ROOT_DIR}/stacks/portainer.yaml" portainer
+envsubst < "${ROOT_DIR}/stacks/portainer.yaml" | docker stack deploy -c - portainer
 
-# Esperar a que Portainer levante
-yellow "Esperando a que Portainer inicialice..."
-for i in $(seq 1 40); do
+# === Esperar Portainer ===
+yellow "Esperando Portainer (máx 60s)..."
+for i in $(seq 1 60); do
   if curl -sk "https://portainerapp.${DOMAIN}/api/status" >/dev/null 2>&1; then
-    green "✅ Portainer API disponible"
+    green "✅ Portainer disponible"
     break
   fi
   sleep 3
 done
 
 # === Servicios base ===
-yellow "Desplegando Postgres..."
-docker stack deploy -c "${ROOT_DIR}/stacks/postgres.yaml" postgres
+for svc in postgres redis rabbitmq minio; do
+  yellow "Desplegando $svc..."
+  envsubst < "${ROOT_DIR}/stacks/${svc}.yaml" | docker stack deploy -c - "$svc"
+done
 
-yellow "Desplegando Redis..."
-docker stack deploy -c "${ROOT_DIR}/stacks/redis.yaml" redis
-
-yellow "Desplegando RabbitMQ..."
-docker stack deploy -c "${ROOT_DIR}/stacks/rabbitmq.yaml" rabbitmq
-
-yellow "Desplegando MinIO..."
-docker stack deploy -c "${ROOT_DIR}/stacks/minio.yaml" minio
 green "MinIO Console: https://miniofrontapp.${DOMAIN}"
 green "MinIO S3:      https://miniobackapp.${DOMAIN}"
 
-# === Crear DBs ===
-yellow "Esperando Postgres (máx 60s)..."
+# === Bases de datos ===
+yellow "Esperando Postgres..."
 for i in $(seq 1 30); do
-  PGCONT=$(docker ps --filter name=postgres_postgres -q | head -n1)
-  if [ -n "$PGCONT" ] && docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" psql -U postgres -c "SELECT 1" >/dev/null 2>&1; then
+  PG=$(docker ps --filter name=postgres_postgres -q | head -n1)
+  if [ -n "$PG" ] && docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PG" psql -U postgres -c "SELECT 1" >/dev/null 2>&1; then
     break
   fi
   sleep 2
 done
 
 yellow "Creando bases chatwoot y n8n_fila..."
-PGCONT=$(docker ps --filter name=postgres_postgres -q | head -n1)
+PG=$(docker ps --filter name=postgres_postgres -q | head -n1)
 for DB in chatwoot n8n_fila; do
-  docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" \
+  docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PG" \
     psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='${DB}'" | grep -q 1 || \
-    docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" psql -U postgres -c "CREATE DATABASE ${DB}"
+    docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PG" psql -U postgres -c "CREATE DATABASE ${DB}"
 done
 
 # === Chatwoot ===
 yellow "Desplegando Chatwoot..."
-docker stack deploy -c "${ROOT_DIR}/stacks/chatwoot.yaml" chatwoot
+envsubst < "${ROOT_DIR}/stacks/chatwoot.yaml" | docker stack deploy -c - chatwoot
 for i in $(seq 1 60); do
   APP=$(docker ps --filter name=chatwoot_chatwoot_app -q)
   [ -n "${APP}" ] && break
@@ -121,21 +117,17 @@ green "Chatwoot: https://chatwootapp.${DOMAIN}"
 
 # === n8n ===
 yellow "Desplegando n8n..."
-docker stack deploy -c "${ROOT_DIR}/stacks/n8n.yaml" n8n
+envsubst < "${ROOT_DIR}/stacks/n8n.yaml" | docker stack deploy -c - n8n
 green "n8n Editor:  https://n8napp.${DOMAIN}"
 green "n8n Webhook: https://n8nwebhookapp.${DOMAIN}"
 
-# === Reconstrucción completa en Portainer ===
-yellow "Reconstruyendo stacks (Full control via Portainer API)..."
+# === Reconstrucción Full control en Portainer ===
+yellow "Reconstruyendo stacks bajo control FULL en Portainer..."
 
 PORTAINER_URL="https://portainerapp.${DOMAIN}"
 PORTAINER_USER="admin"
 PORTAINER_PASS="${PASSWORD_32}"
 STACKS_DIR="${ROOT_DIR}/stacks"
-
-# Asegurar que envsubst esté disponible
-apt-get install -y gettext >/dev/null 2>&1 || true
-
 JWT=$(curl -sk -X POST "${PORTAINER_URL}/api/auth" \
   -H "Content-Type: application/json" \
   -d "{\"Username\": \"${PORTAINER_USER}\", \"Password\": \"${PORTAINER_PASS}\"}" | jq -r .jwt)
@@ -144,37 +136,23 @@ if [ "$JWT" != "null" ] && [ -n "$JWT" ]; then
   ENDPOINT_ID=1
   SWARM_ID=$(docker info -f '{{.Swarm.Cluster.ID}}')
 
-  # 1️⃣ Eliminar stacks existentes
+  echo "🧹 Eliminando stacks anteriores..."
   for s in chatwoot minio n8n portainer postgres rabbitmq redis traefik; do
-    echo "→ Eliminando stack existente: $s"
     docker stack rm "$s" >/dev/null 2>&1 || true
   done
 
-  # 🕐 Esperar hasta que no queden servicios
-  echo "⏳ Esperando que se eliminen todos los servicios..."
+  echo "⏳ Esperando que no queden servicios..."
   for i in $(seq 1 60); do
     ACTIVE=$(docker service ls -q | wc -l)
-    if [ "$ACTIVE" -eq 0 ]; then
-      green "✅ Todos los servicios fueron eliminados correctamente."
-      break
-    fi
-    printf "."
+    [ "$ACTIVE" -eq 0 ] && break
     sleep 3
   done
-  echo ""
 
-  # 2️⃣ Recrear stacks con variables del entorno aplicadas
-  TMP_DIR="/tmp/stacks_rendered"
-  mkdir -p "$TMP_DIR"
-
+  echo "➡️  Recreando stacks finales..."
   for f in ${STACKS_DIR}/*.yaml; do
     NAME=$(basename "$f" .yaml)
-    TMP_FILE="${TMP_DIR}/${NAME}.yaml"
-
-    # Reemplazar variables ${...} usando las del entorno
+    TMP_FILE="/tmp/${NAME}.yaml"
     envsubst < "$f" > "$TMP_FILE"
-
-    echo "→ Recreando stack $NAME..."
     curl -sk -X POST "${PORTAINER_URL}/api/stacks/create/swarm/file" \
       -H "Authorization: Bearer ${JWT}" \
       -F "Name=${NAME}" \
@@ -183,15 +161,23 @@ if [ "$JWT" != "null" ] && [ -n "$JWT" ]; then
       -F "ComposeFile=@${TMP_FILE}" >/dev/null
   done
 
-  green "✅ Todos los stacks fueron recreados bajo control total de Portainer."
+  green "✅ Stacks recreados con control total en Portainer."
 else
-  red "❌ No se pudo autenticar con la API de Portainer."
+  red "❌ Error autenticando con la API de Portainer."
 fi
 
+# === Auto-levantamiento final ===
+yellow "➡️  Re-desplegando stacks finales..."
+for f in ${STACKS_DIR}/*.yaml; do
+  NAME=$(basename "$f" .yaml)
+  envsubst < "$f" | docker stack deploy -c - "$NAME"
+done
+green "✅ Todos los stacks fueron levantados nuevamente y están corriendo."
+docker service ls
 
-# === Resumen final ===
+# === Resumen ===
 green "==============================================================="
-green "✅ Despliegue completo."
+green "✅ Despliegue completo listo."
 echo "Configura DNS A -> ${SERVER_IP} para:"
 cat <<DNS
 - portainerapp.${DOMAIN}
