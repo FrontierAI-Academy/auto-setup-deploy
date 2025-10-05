@@ -133,6 +133,9 @@ PORTAINER_USER="admin"
 PORTAINER_PASS="${PASSWORD_32}"
 STACKS_DIR="${ROOT_DIR}/stacks"
 
+# Asegurar que envsubst esté disponible
+apt-get install -y gettext >/dev/null 2>&1 || true
+
 JWT=$(curl -sk -X POST "${PORTAINER_URL}/api/auth" \
   -H "Content-Type: application/json" \
   -d "{\"Username\": \"${PORTAINER_USER}\", \"Password\": \"${PORTAINER_PASS}\"}" | jq -r .jwt)
@@ -160,16 +163,24 @@ if [ "$JWT" != "null" ] && [ -n "$JWT" ]; then
   done
   echo ""
 
-  # 2️⃣ Recrear stacks con control total
+  # 2️⃣ Recrear stacks con variables del entorno aplicadas
+  TMP_DIR="/tmp/stacks_rendered"
+  mkdir -p "$TMP_DIR"
+
   for f in ${STACKS_DIR}/*.yaml; do
     NAME=$(basename "$f" .yaml)
+    TMP_FILE="${TMP_DIR}/${NAME}.yaml"
+
+    # Reemplazar variables ${...} usando las del entorno
+    envsubst < "$f" > "$TMP_FILE"
+
     echo "→ Recreando stack $NAME..."
     curl -sk -X POST "${PORTAINER_URL}/api/stacks/create/swarm/file" \
       -H "Authorization: Bearer ${JWT}" \
       -F "Name=${NAME}" \
       -F "SwarmID=${SWARM_ID}" \
       -F "EndpointId=${ENDPOINT_ID}" \
-      -F "ComposeFile=@${f}" >/dev/null
+      -F "ComposeFile=@${TMP_FILE}" >/dev/null
   done
 
   green "✅ Todos los stacks fueron recreados bajo control total de Portainer."
