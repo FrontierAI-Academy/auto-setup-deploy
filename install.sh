@@ -85,12 +85,36 @@ green "MinIO Console: https://miniofrontapp.${DOMAIN}"
 green "MinIO S3:      https://miniobackapp.${DOMAIN}"
 
 # === Crear DBs ===
-yellow "Esperando Postgres..."
-for i in $(seq 1 30); do
+yellow "Esperando Postgres listo (máx 120s)..."
+for i in $(seq 1 60); do
   PGCONT=$(docker ps --filter name=postgres_postgres -q | head -n1)
-  [ -n "$PGCONT" ] && docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" psql -U postgres -c "SELECT 1" >/dev/null 2>&1 && break
+  if [ -n "$PGCONT" ]; then
+    if docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" psql -U postgres -c "SELECT 1" >/dev/null 2>&1; then
+      green "✅ Postgres disponible."
+      break
+    else
+      echo "↻ Esperando que Postgres acepte conexiones..."
+    fi
+  else
+    echo "↻ Esperando contenedor de Postgres..."
+  fi
   sleep 2
 done
+
+# Validar que realmente se encontró un contenedor
+PGCONT=$(docker ps --filter name=postgres_postgres -q | head -n1)
+if [ -z "$PGCONT" ]; then
+  red "❌ No se pudo encontrar el contenedor de Postgres. Abortando creación de DBs."
+  exit 1
+fi
+
+yellow "Creando bases chatwoot y n8n_fila..."
+for DB in chatwoot n8n_fila; do
+  docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" \
+    psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='${DB}'" | grep -q 1 || \
+    docker exec -e PGPASSWORD="${PASSWORD_32}" -i "$PGCONT" psql -U postgres -c "CREATE DATABASE ${DB}"
+done
+
 
 yellow "Creando bases de datos..."
 PGCONT=$(docker ps --filter name=postgres_postgres -q | head -n1)
